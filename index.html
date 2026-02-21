@@ -1,0 +1,688 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>LU | Confusion Matrix & ROC Lab</title>
+    <script src="https://cdn.tailwindcss.com"></script>
+    <script src="https://d3js.org/d3.v7.min.js"></script>
+    <script src="https://unpkg.com/lucide@latest"></script>
+    <style>
+        @import url('https://fonts.googleapis.com/css2?family=Inter:wght@300;400;600;800&family=JetBrains+Mono:wght@400;700&family=Montserrat:wght@800;900&display=swap');
+        
+        :root {
+            --lu-gold: #B5A26C;
+            --obsidian: #020617;
+            --charcoal: #0f172a;
+            --neon-blue: #3b82f6;
+            --tp-color: #10b981; /* Green */
+            --tn-color: #3b82f6; /* Blue */
+            --fp-color: #f59e0b; /* Yellow/Orange */
+            --fn-color: #ef4444; /* Red */
+        }
+
+        body {
+            font-family: 'Inter', sans-serif;
+            background-color: var(--obsidian);
+            color: #e2e8f0;
+            overflow-x: hidden;
+        }
+
+        .font-brand { font-family: 'Montserrat', sans-serif; }
+        .font-mono { font-family: 'JetBrains Mono', monospace; }
+
+        .glass {
+            background: rgba(15, 23, 42, 0.7);
+            backdrop-filter: blur(12px);
+            border: 1px solid rgba(255, 255, 255, 0.05);
+            box-shadow: 0 15px 35px rgba(0,0,0,0.4);
+        }
+
+        .slider-custom {
+            accent-color: var(--lu-gold);
+            width: 100%;
+            cursor: pointer;
+        }
+
+        /* Confusion Matrix Grid */
+        .cm-grid {
+            display: grid;
+            grid-template-columns: 80px 1fr 1fr;
+            grid-template-rows: 80px 1fr 1fr;
+            gap: 4px;
+            text-align: center;
+        }
+        .cm-header {
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            font-size: 0.75rem;
+            font-weight: 800;
+            text-transform: uppercase;
+            letter-spacing: 0.1em;
+            color: #64748b;
+        }
+        .cm-cell {
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+            justify-content: center;
+            border-radius: 12px;
+            padding: 15px;
+            transition: all 0.3s ease;
+            position: relative;
+            overflow: hidden;
+        }
+        .cm-val { font-size: 2rem; font-weight: 900; font-family: 'JetBrains Mono', monospace; z-index: 2; }
+        .cm-label { font-size: 0.7rem; font-weight: 700; text-transform: uppercase; z-index: 2; opacity: 0.8; }
+        
+        .bg-tp { background: rgba(16, 185, 129, 0.15); border: 2px solid rgba(16, 185, 129, 0.3); color: var(--tp-color); }
+        .bg-tn { background: rgba(59, 130, 246, 0.15); border: 2px solid rgba(59, 130, 246, 0.3); color: var(--tn-color); }
+        .bg-fp { background: rgba(245, 158, 11, 0.15); border: 2px solid rgba(245, 158, 11, 0.3); color: var(--fp-color); }
+        .bg-fn { background: rgba(239, 68, 68, 0.15); border: 2px solid rgba(239, 68, 68, 0.3); color: var(--fn-color); }
+
+        /* Metric Cards */
+        .metric-card {
+            background: rgba(255,255,255,0.02);
+            border: 1px solid rgba(255,255,255,0.05);
+            border-radius: 12px;
+            padding: 15px;
+            text-align: center;
+            transition: transform 0.2s, box-shadow 0.2s, background 0.2s;
+            cursor: pointer;
+            position: relative;
+        }
+        .metric-card:hover { 
+            transform: translateY(-4px); 
+            background: rgba(255,255,255,0.05);
+            box-shadow: 0 10px 20px rgba(0,0,0,0.3);
+            border-color: rgba(255,255,255,0.15);
+        }
+        .click-hint {
+            position: absolute;
+            top: 6px;
+            right: 8px;
+            font-size: 10px;
+            color: #64748b;
+            opacity: 0;
+            transition: opacity 0.2s;
+        }
+        .metric-card:hover .click-hint { opacity: 1; }
+
+        /* ROC Tooltip */
+        #roc-tooltip {
+            position: absolute;
+            display: none;
+            background: rgba(15, 23, 42, 0.95);
+            color: #fff;
+            padding: 10px 14px;
+            border-radius: 8px;
+            border: 1px solid var(--lu-gold);
+            font-size: 12px;
+            font-family: 'JetBrains Mono', monospace;
+            pointer-events: none;
+            z-index: 100;
+            box-shadow: 0 4px 15px rgba(0,0,0,0.5);
+            backdrop-filter: blur(4px);
+        }
+
+        /* D3 Styles */
+        .axis-label { font-size: 10px; font-weight: 900; fill: #64748b; text-transform: uppercase; letter-spacing: 0.1em; }
+        .roc-line { fill: none; stroke: var(--lu-gold); stroke-width: 3; }
+        .roc-diagonal { fill: none; stroke: #475569; stroke-width: 2; stroke-dasharray: 5,5; }
+        .data-point-bg { transition: fill 0.3s, stroke 0.3s; stroke-width: 2; }
+    </style>
+</head>
+<body class="p-4 flex flex-col min-h-screen">
+
+    <!-- ROC Dot Tooltip -->
+    <div id="roc-tooltip"></div>
+
+    <!-- Educational Modal -->
+    <div id="metric-modal" class="fixed inset-0 z-[200] hidden items-center justify-center bg-black/70 backdrop-blur-sm opacity-0 transition-opacity duration-300">
+        <div class="bg-slate-900 border border-slate-700 rounded-2xl p-8 max-w-lg w-full shadow-2xl transform scale-95 transition-transform duration-300" id="modal-content-box">
+            <div class="flex justify-between items-start mb-6">
+                <div>
+                    <h2 id="modal-title" class="text-2xl font-black text-white uppercase tracking-wider">Metric</h2>
+                    <p class="text-xs text-slate-400 font-bold tracking-widest uppercase mt-1">Deep Dive Breakdown</p>
+                </div>
+                <button onclick="closeModal()" class="text-slate-400 hover:text-white bg-slate-800 hover:bg-slate-700 p-2 rounded-lg transition-colors">
+                    <i data-lucide="x" class="w-5 h-5"></i>
+                </button>
+            </div>
+            
+            <div class="space-y-6 text-sm text-slate-300">
+                <div class="bg-slate-800/50 p-4 rounded-xl border border-slate-700/50">
+                    <strong class="flex items-center gap-2 text-blue-400 uppercase text-[10px] tracking-widest mb-2">
+                        <i data-lucide="book-open" class="w-3 h-3"></i> Definition
+                    </strong>
+                    <p id="modal-def" class="text-slate-200 leading-relaxed"></p>
+                </div>
+                
+                <div class="grid grid-cols-2 gap-4">
+                    <div class="bg-slate-800/50 p-4 rounded-xl border border-slate-700/50">
+                        <strong class="flex items-center gap-2 text-purple-400 uppercase text-[10px] tracking-widest mb-2">
+                            <i data-lucide="function-square" class="w-3 h-3"></i> Formula
+                        </strong>
+                        <div id="modal-form" class="font-mono text-center text-white font-bold bg-black/40 py-2 rounded-lg text-xs"></div>
+                    </div>
+                    
+                    <div class="bg-slate-800/50 p-4 rounded-xl border border-slate-700/50">
+                        <strong class="flex items-center gap-2 text-[--lu-gold] uppercase text-[10px] tracking-widest mb-2">
+                            <i data-lucide="calculator" class="w-3 h-3"></i> Live Calculation
+                        </strong>
+                        <div id="modal-calc" class="font-mono text-center text-white font-bold bg-black/40 py-2 rounded-lg text-xs"></div>
+                    </div>
+                </div>
+
+                <div class="bg-blue-900/20 p-4 rounded-xl border border-blue-500/20">
+                    <strong class="flex items-center gap-2 text-blue-300 uppercase text-[10px] tracking-widest mb-2">
+                        <i data-lucide="lightbulb" class="w-3 h-3"></i> How to Interpret
+                    </strong>
+                    <p id="modal-interp" class="text-blue-100 italic text-xs leading-relaxed"></p>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <div class="max-w-[1600px] w-full mx-auto flex flex-col h-full relative z-10">
+        <!-- HEADER -->
+        <header class="flex flex-col md:flex-row justify-between items-center mb-6 gap-4 border-b border-white/5 pb-4 flex-shrink-0">
+            <div class="flex items-center gap-4">
+                <div class="bg-blue-500/10 p-3 rounded-xl border border-blue-500/20">
+                    <i data-lucide="target" class="text-blue-400 w-6 h-6"></i>
+                </div>
+                <div>
+                    <span class="font-brand text-[10px] tracking-[0.4em] text-[--lu-gold] uppercase block mb-1">DSCI 356000 | Lindenwood University</span>
+                    <h1 class="text-2xl md:text-3xl font-brand font-black text-white tracking-tighter uppercase leading-none">
+                        Classification <span class="text-transparent bg-clip-text bg-gradient-to-r from-[--lu-gold] to-white/40">Metrics Lab</span>
+                    </h1>
+                    <p class="text-slate-500 text-[10px] font-bold uppercase tracking-widest mt-1">Instructor: Mr. Kalauni • Interactive Confusion Matrix & ROC</p>
+                </div>
+            </div>
+            <button onclick="generateData()" class="px-4 py-2 glass rounded-xl hover:bg-white/10 text-xs font-bold uppercase tracking-widest transition-all flex items-center gap-2">
+                <i data-lucide="refresh-cw" class="w-4 h-4"></i> New Data
+            </button>
+        </header>
+
+        <div class="grid grid-cols-1 lg:grid-cols-12 gap-6 flex-1 min-h-0">
+            
+            <!-- LEFT PANEL: THRESHOLD & METRICS -->
+            <aside class="lg:col-span-3 flex flex-col gap-4">
+                <!-- Threshold Control -->
+                <div class="glass p-6 rounded-[2rem]">
+                    <h3 class="text-[10px] font-black text-slate-400 uppercase tracking-[0.2em] mb-4 flex items-center gap-2">
+                        <i data-lucide="sliders-horizontal" class="w-4 h-4 text-[--lu-gold]"></i> Threshold Control
+                    </h3>
+                    
+                    <div class="text-center mb-4">
+                        <span class="text-4xl font-mono font-black text-white" id="threshold-val">0.50</span>
+                    </div>
+                    
+                    <input type="range" id="threshold-slider" min="0" max="1" step="0.01" value="0.5" class="slider-custom mb-2">
+                    <div class="flex justify-between text-[9px] font-bold text-slate-500 uppercase">
+                        <span>Predict All 1s</span>
+                        <span>Predict All 0s</span>
+                    </div>
+                    
+                    <p class="text-[10px] text-slate-400 mt-4 leading-relaxed italic">
+                        Move the slider to change the decision boundary. Probabilities &ge; Threshold are predicted as Positive (1).
+                    </p>
+                </div>
+
+                <!-- Live Metrics -->
+                <div class="glass p-6 rounded-[2rem] flex-1">
+                    <h3 class="text-[10px] font-black text-slate-400 uppercase tracking-[0.2em] mb-4 flex items-center justify-between">
+                        <span class="flex items-center gap-2"><i data-lucide="bar-chart-2" class="w-4 h-4 text-[--neon-blue]"></i> Performance Metrics</span>
+                    </h3>
+                    <p class="text-[9px] text-slate-500 uppercase tracking-widest mb-4 text-center border-b border-slate-700/50 pb-2 animate-pulse">Click any card to learn more</p>
+                    
+                    <div class="grid grid-cols-2 gap-3">
+                        <div class="metric-card" onclick="openModal('accuracy')">
+                            <span class="click-hint"><i data-lucide="zoom-in" class="w-3 h-3"></i></span>
+                            <div class="text-[10px] text-slate-400 font-bold uppercase mb-1">Accuracy</div>
+                            <div class="text-2xl font-mono font-bold text-white" id="val-acc">0.00</div>
+                            <div class="text-[8px] text-slate-500 mt-1">Overall Correctness</div>
+                        </div>
+                        <div class="metric-card" onclick="openModal('precision')">
+                            <span class="click-hint"><i data-lucide="zoom-in" class="w-3 h-3"></i></span>
+                            <div class="text-[10px] text-slate-400 font-bold uppercase mb-1">Precision</div>
+                            <div class="text-2xl font-mono font-bold text-[--tp-color]" id="val-prec">0.00</div>
+                            <div class="text-[8px] text-slate-500 mt-1">TP / (TP + FP)</div>
+                        </div>
+                        <div class="metric-card" onclick="openModal('recall')">
+                            <span class="click-hint"><i data-lucide="zoom-in" class="w-3 h-3"></i></span>
+                            <div class="text-[10px] text-slate-400 font-bold uppercase mb-1">Recall (TPR)</div>
+                            <div class="text-2xl font-mono font-bold text-[--tp-color]" id="val-rec">0.00</div>
+                            <div class="text-[8px] text-slate-500 mt-1">TP / (TP + FN)</div>
+                        </div>
+                        <div class="metric-card" onclick="openModal('f1')">
+                            <span class="click-hint"><i data-lucide="zoom-in" class="w-3 h-3"></i></span>
+                            <div class="text-[10px] text-slate-400 font-bold uppercase mb-1">F1-Score</div>
+                            <div class="text-2xl font-mono font-bold text-[--lu-gold]" id="val-f1">0.00</div>
+                            <div class="text-[8px] text-slate-500 mt-1">Harmonic Mean</div>
+                        </div>
+                    </div>
+                </div>
+            </aside>
+
+            <!-- MIDDLE PANEL: DISTRIBUTION & CONFUSION MATRIX -->
+            <div class="lg:col-span-5 flex flex-col gap-4">
+                
+                <!-- Probability Distribution Plot -->
+                <div class="glass p-6 rounded-[2rem] relative h-[300px]">
+                    <h3 class="absolute top-6 left-6 text-[10px] font-black text-slate-400 uppercase tracking-[0.2em] z-10">
+                        Probability Distribution
+                    </h3>
+                    <div id="dist-plot" class="w-full h-full mt-4"></div>
+                </div>
+
+                <!-- Confusion Matrix -->
+                <div class="glass p-6 rounded-[2rem] flex-1 flex flex-col justify-center items-center">
+                    <h3 class="text-[10px] font-black text-slate-400 uppercase tracking-[0.2em] mb-6 w-full text-left">
+                        2x2 Confusion Matrix
+                    </h3>
+                    
+                    <div class="cm-grid w-full max-w-[400px]">
+                        <!-- Empty Top Left -->
+                        <div></div>
+                        <div class="cm-header border-b border-slate-700 pb-2">Predicted Positive (1)</div>
+                        <div class="cm-header border-b border-slate-700 pb-2">Predicted Negative (0)</div>
+                        
+                        <!-- Row 1 -->
+                        <div class="cm-header border-r border-slate-700 pr-2" style="writing-mode: vertical-rl; transform: rotate(180deg);">Actual Positive (1)</div>
+                        <div class="cm-cell bg-tp">
+                            <span class="cm-val" id="cm-tp">0</span>
+                            <span class="cm-label">True Positive (TP)</span>
+                        </div>
+                        <div class="cm-cell bg-fn">
+                            <span class="cm-val" id="cm-fn">0</span>
+                            <span class="cm-label">False Negative (FN)</span>
+                        </div>
+                        
+                        <!-- Row 2 -->
+                        <div class="cm-header border-r border-slate-700 pr-2" style="writing-mode: vertical-rl; transform: rotate(180deg);">Actual Negative (0)</div>
+                        <div class="cm-cell bg-fp">
+                            <span class="cm-val" id="cm-fp">0</span>
+                            <span class="cm-label">False Positive (FP)</span>
+                        </div>
+                        <div class="cm-cell bg-tn">
+                            <span class="cm-val" id="cm-tn">0</span>
+                            <span class="cm-label">True Negative (TN)</span>
+                        </div>
+                    </div>
+                </div>
+
+            </div>
+
+            <!-- RIGHT PANEL: ROC CURVE -->
+            <div class="lg:col-span-4 glass p-6 rounded-[2rem] relative flex flex-col">
+                <div class="flex justify-between items-start z-10 mb-4">
+                    <h3 class="text-[10px] font-black text-slate-400 uppercase tracking-[0.2em]">
+                        ROC Curve
+                    </h3>
+                    <div class="text-right">
+                        <div class="text-[10px] text-slate-500 font-bold uppercase">AUC Score</div>
+                        <div class="text-xl font-mono font-bold text-[--lu-gold]" id="val-auc">0.00</div>
+                    </div>
+                </div>
+                
+                <div id="roc-plot" class="w-full flex-1 min-h-[300px] relative"></div>
+                
+                <div class="mt-4 p-4 bg-slate-900/50 rounded-xl border border-slate-800 text-[10px] text-slate-400 leading-relaxed">
+                    <strong class="text-white">Receiver Operating Characteristic:</strong> Shows the trade-off between True Positive Rate (Recall) and False Positive Rate. <span class="text-[--lu-gold]">Hover over the golden dot to see exact coordinates!</span>
+                </div>
+            </div>
+
+        </div>
+    </div>
+
+    <script>
+        // --- GLOBAL STATE & METRICS ---
+        let threshold = 0.5;
+        let dataset = [];
+        let rocData = [];
+        let auc = 0;
+        
+        let currentTP = 0, currentFP = 0, currentTN = 0, currentFN = 0;
+        let currentTPR = 0, currentFPR = 0;
+
+        // D3 SVGs and Scales
+        let distSvg, rocSvg;
+        let distW, distH, rocW, rocH;
+        let xDist, yDist, xRoc, yRoc;
+        
+        // D3 Elements
+        let thresholdLine, rocPath, rocDot;
+
+        // --- EDUCATIONAL CONTENT DICTIONARY ---
+        const metricInfo = {
+            accuracy: {
+                title: "Accuracy",
+                def: "The proportion of total predictions (both positive and negative) that were correct.",
+                form: "(TP + TN) / Total",
+                interp: "Best used when the target classes are balanced. Answers the simple question: 'Overall, how often is the model right?'"
+            },
+            precision: {
+                title: "Precision",
+                def: "The proportion of positive predictions that were actually correct.",
+                form: "TP / (TP + FP)",
+                interp: "Focuses on 'Quality'. Use when False Positives are costly (e.g., Spam detection - you don't want to classify an important email as spam). Answers: 'When it predicts positive, how often is it right?'"
+            },
+            recall: {
+                title: "Recall (Sensitivity / TPR)",
+                def: "The proportion of actual positive cases that were correctly identified.",
+                form: "TP / (TP + FN)",
+                interp: "Focuses on 'Quantity'. Use when False Negatives are costly (e.g., Cancer screening - you don't want to miss a sick patient). Answers: 'Out of all actual positives, how many did we catch?'"
+            },
+            f1: {
+                title: "F1-Score",
+                def: "The harmonic mean of Precision and Recall. It provides a single score that balances both concerns.",
+                form: "2 × (Precision × Recall) / (Precision + Recall)",
+                interp: "Use when you need a balance between Precision and Recall, especially if there is an uneven class distribution (imbalanced dataset)."
+            }
+        };
+
+        // --- MODAL FUNCTIONS ---
+        window.openModal = function(metricType) {
+            const info = metricInfo[metricType];
+            document.getElementById('modal-title').innerText = info.title;
+            document.getElementById('modal-def').innerText = info.def;
+            document.getElementById('modal-form').innerText = info.form;
+            document.getElementById('modal-interp').innerText = info.interp;
+
+            // Generate Dynamic Calculation String
+            const total = currentTP + currentTN + currentFP + currentFN;
+            let calcStr = "";
+            
+            if (metricType === 'accuracy') {
+                const acc = (currentTP + currentTN) / total;
+                calcStr = `(${currentTP} + ${currentTN}) / ${total} = ${acc.toFixed(2)}`;
+            } else if (metricType === 'precision') {
+                const prec = (currentTP + currentFP) === 0 ? 0 : currentTP / (currentTP + currentFP);
+                calcStr = `${currentTP} / (${currentTP} + ${currentFP}) = ${prec.toFixed(2)}`;
+            } else if (metricType === 'recall') {
+                const rec = (currentTP + currentFN) === 0 ? 0 : currentTP / (currentTP + currentFN);
+                calcStr = `${currentTP} / (${currentTP} + ${currentFN}) = ${rec.toFixed(2)}`;
+            } else if (metricType === 'f1') {
+                const p = (currentTP + currentFP) === 0 ? 0 : currentTP / (currentTP + currentFP);
+                const r = (currentTP + currentFN) === 0 ? 0 : currentTP / (currentTP + currentFN);
+                const f = (p + r) === 0 ? 0 : 2 * (p * r) / (p + r);
+                calcStr = `2 × (${p.toFixed(2)} × ${r.toFixed(2)}) / (${p.toFixed(2)} + ${r.toFixed(2)}) = ${f.toFixed(2)}`;
+            }
+
+            document.getElementById('modal-calc').innerText = calcStr;
+
+            // Show Modal with Animation
+            const modal = document.getElementById('metric-modal');
+            modal.classList.remove('hidden');
+            modal.classList.add('flex');
+            // Slight delay to allow display:flex to apply before animating opacity
+            setTimeout(() => {
+                modal.classList.remove('opacity-0');
+                document.getElementById('modal-content-box').classList.remove('scale-95');
+            }, 10);
+            
+            lucide.createIcons();
+        }
+
+        window.closeModal = function() {
+            const modal = document.getElementById('metric-modal');
+            modal.classList.add('opacity-0');
+            document.getElementById('modal-content-box').classList.add('scale-95');
+            setTimeout(() => {
+                modal.classList.add('hidden');
+                modal.classList.remove('flex');
+            }, 300);
+        }
+
+        // Close modal when clicking outside
+        document.getElementById('metric-modal').addEventListener('click', function(e) {
+            if(e.target === this) window.closeModal();
+        });
+
+        // --- INIT ---
+        function init() {
+            lucide.createIcons();
+            
+            // Setup Distribution Plot SVG
+            const distContainer = document.getElementById('dist-plot');
+            distW = distContainer.clientWidth;
+            distH = distContainer.clientHeight - 20;
+            const distMargin = {top: 20, right: 20, bottom: 30, left: 20};
+            
+            distSvg = d3.select("#dist-plot").append("svg")
+                .attr("width", distW)
+                .attr("height", distH + 20);
+                
+            xDist = d3.scaleLinear().domain([0, 1]).range([distMargin.left, distW - distMargin.right]);
+            
+            distSvg.append("g")
+                .attr("transform", `translate(0, ${distH - distMargin.bottom})`)
+                .call(d3.axisBottom(xDist).ticks(10))
+                .attr("class", "axis-label");
+                
+            thresholdLine = distSvg.append("line")
+                .attr("y1", distMargin.top)
+                .attr("y2", distH - distMargin.bottom)
+                .attr("stroke", "white")
+                .attr("stroke-width", 2)
+                .attr("stroke-dasharray", "5,5");
+
+            // Setup ROC Plot SVG
+            const rocContainer = document.getElementById('roc-plot');
+            rocW = rocContainer.clientWidth;
+            rocH = rocContainer.clientHeight;
+            const rocMargin = {top: 10, right: 10, bottom: 40, left: 40};
+            
+            rocSvg = d3.select("#roc-plot").append("svg")
+                .attr("width", rocW)
+                .attr("height", rocH);
+                
+            xRoc = d3.scaleLinear().domain([0, 1]).range([rocMargin.left, rocW - rocMargin.right]);
+            yRoc = d3.scaleLinear().domain([0, 1]).range([rocH - rocMargin.bottom, rocMargin.top]);
+            
+            rocSvg.append("g")
+                .attr("transform", `translate(0, ${rocH - rocMargin.bottom})`)
+                .call(d3.axisBottom(xRoc).ticks(5))
+                .attr("class", "axis-label");
+                
+            rocSvg.append("g")
+                .attr("transform", `translate(${rocMargin.left}, 0)`)
+                .call(d3.axisLeft(yRoc).ticks(5))
+                .attr("class", "axis-label");
+
+            // Axis labels for ROC
+            rocSvg.append("text").attr("x", rocW/2).attr("y", rocH - 5).attr("text-anchor", "middle").attr("class", "axis-label").text("False Positive Rate (FPR)");
+            rocSvg.append("text").attr("transform", "rotate(-90)").attr("x", -rocH/2).attr("y", 12).attr("text-anchor", "middle").attr("class", "axis-label").text("True Positive Rate (TPR)");
+
+            rocSvg.append("line")
+                .attr("x1", xRoc(0)).attr("y1", yRoc(0))
+                .attr("x2", xRoc(1)).attr("y2", yRoc(1))
+                .attr("class", "roc-diagonal");
+
+            rocPath = rocSvg.append("path").attr("class", "roc-line");
+            
+            // Add Interactive Hover functionality to ROC Dot
+            rocDot = rocSvg.append("circle")
+                .attr("r", 7)
+                .attr("fill", "var(--lu-gold)")
+                .attr("stroke", "white")
+                .attr("stroke-width", 2)
+                .style("cursor", "pointer")
+                .on("mouseover", (event) => {
+                    const tooltip = document.getElementById('roc-tooltip');
+                    // Use the globally updated currentTPR and currentFPR
+                    tooltip.innerHTML = `<strong>Current Threshold: ${threshold.toFixed(2)}</strong><br/><br/><span style="color:var(--tp-color)">TPR (Recall): ${currentTPR.toFixed(3)}</span><br/><span style="color:var(--fp-color)">FPR (Fall-out): ${currentFPR.toFixed(3)}</span>`;
+                    tooltip.style.display = 'block';
+                    tooltip.style.left = (event.pageX + 15) + 'px';
+                    tooltip.style.top = (event.pageY - 40) + 'px';
+                })
+                .on("mousemove", (event) => {
+                    const tooltip = document.getElementById('roc-tooltip');
+                    tooltip.style.left = (event.pageX + 15) + 'px';
+                    tooltip.style.top = (event.pageY - 40) + 'px';
+                })
+                .on("mouseout", () => {
+                    document.getElementById('roc-tooltip').style.display = 'none';
+                });
+
+            // Generate initial data
+            generateData();
+
+            // Slider Event
+            document.getElementById('threshold-slider').addEventListener('input', (e) => {
+                threshold = parseFloat(e.target.value);
+                document.getElementById('threshold-val').innerText = threshold.toFixed(2);
+                updateVisuals();
+            });
+        }
+
+        // --- DATA GENERATION ---
+        function generateData() {
+            dataset = [];
+            // Generate Class 0 (Actual Negative) - Skewed left
+            for(let i=0; i<25; i++) {
+                let prob = d3.randomNormal(0.3, 0.15)();
+                prob = Math.max(0.01, Math.min(0.99, prob));
+                dataset.push({ id: `n${i}`, actual: 0, prob: prob, yJitter: Math.random() * 80 + 20 });
+            }
+            // Generate Class 1 (Actual Positive) - Skewed right
+            for(let i=0; i<25; i++) {
+                let prob = d3.randomNormal(0.7, 0.15)();
+                prob = Math.max(0.01, Math.min(0.99, prob));
+                dataset.push({ id: `p${i}`, actual: 1, prob: prob, yJitter: Math.random() * 80 + 20 });
+            }
+
+            calculateROC();
+            drawDistribution();
+            updateVisuals();
+        }
+
+        function calculateROC() {
+            // Sort data by probability descending
+            const sorted = [...dataset].sort((a, b) => b.prob - a.prob);
+            const numPos = sorted.filter(d => d.actual === 1).length;
+            const numNeg = sorted.filter(d => d.actual === 0).length;
+            
+            rocData = [{ fpr: 0, tpr: 0, thresh: 1.1 }];
+            let tp = 0, fp = 0;
+            auc = 0;
+            let prevFpr = 0;
+
+            sorted.forEach(d => {
+                if(d.actual === 1) tp++;
+                else fp++;
+                
+                const currentFpr = fp / numNeg;
+                const currentTpr = tp / numPos;
+                
+                rocData.push({ fpr: currentFpr, tpr: currentTpr, thresh: d.prob });
+                
+                // Trapezoidal rule for AUC
+                auc += ((currentFpr - prevFpr) * currentTpr);
+                prevFpr = currentFpr;
+            });
+            
+            document.getElementById('val-auc').innerText = auc.toFixed(3);
+
+            // Draw ROC Path
+            const lineGen = d3.line().x(d => xRoc(d.fpr)).y(d => yRoc(d.tpr));
+            rocPath.datum(rocData).attr("d", lineGen);
+        }
+
+        // --- DRAWING ---
+        function drawDistribution() {
+            const nodes = distSvg.selectAll(".data-node").data(dataset, d => d.id);
+            
+            const nodesEnter = nodes.enter()
+                .append("g")
+                .attr("class", "data-node")
+                .attr("transform", d => `translate(${xDist(d.prob)}, ${d.yJitter})`);
+                
+            nodesEnter.append("circle")
+                .attr("class", "data-point-bg")
+                .attr("r", 0);
+                
+            nodesEnter.append("text")
+                .attr("class", "data-point-txt")
+                .attr("text-anchor", "middle")
+                .attr("dy", "0.3em")
+                .attr("font-weight", "900")
+                .attr("font-size", "12px")
+                .attr("fill", "white")
+                .style("pointer-events", "none")
+                .style("user-select", "none")
+                .style("opacity", 0)
+                .text(d => d.actual === 1 ? "+" : "-");
+                
+            const nodesMerge = nodesEnter.merge(nodes);
+            
+            nodesMerge.transition().duration(500)
+                .attr("transform", d => `translate(${xDist(d.prob)}, ${d.yJitter})`);
+                
+            nodesMerge.select(".data-point-bg").transition().duration(500)
+                .attr("r", 8);
+                
+            nodesMerge.select(".data-point-txt").transition().duration(500)
+                .style("opacity", 1);
+                
+            nodes.exit().transition().duration(300)
+                .style("opacity", 0)
+                .remove();
+        }
+
+        function updateVisuals() {
+            currentTP = 0; currentFP = 0; currentTN = 0; currentFN = 0;
+
+            // Pre-calculate states to decouple logic from DOM updates
+            dataset.forEach(d => {
+                d.predicted = d.prob >= threshold ? 1 : 0;
+                if(d.actual === 1 && d.predicted === 1) { currentTP++; d.state = "tp"; }
+                else if(d.actual === 0 && d.predicted === 1) { currentFP++; d.state = "fp"; }
+                else if(d.actual === 0 && d.predicted === 0) { currentTN++; d.state = "tn"; }
+                else if(d.actual === 1 && d.predicted === 0) { currentFN++; d.state = "fn"; }
+            });
+
+            // Update Points Styling
+            distSvg.selectAll(".data-node")
+                .select(".data-point-bg")
+                .attr("fill", d => `var(--${d.state}-color)`)
+                .attr("stroke", d => d.actual !== d.predicted ? "white" : "transparent")
+                .attr("stroke-width", 2);
+
+            // Move Threshold Line
+            thresholdLine.transition().duration(100)
+                .attr("x1", xDist(threshold)).attr("x2", xDist(threshold));
+
+            // Update Confusion Matrix DOM
+            document.getElementById('cm-tp').innerText = currentTP;
+            document.getElementById('cm-fp').innerText = currentFP;
+            document.getElementById('cm-tn').innerText = currentTN;
+            document.getElementById('cm-fn').innerText = currentFN;
+
+            // Calculate Metrics
+            const precision = (currentTP + currentFP) === 0 ? 0 : currentTP / (currentTP + currentFP);
+            const recall = (currentTP + currentFN) === 0 ? 0 : currentTP / (currentTP + currentFN);
+            const f1 = (precision + recall) === 0 ? 0 : 2 * (precision * recall) / (precision + recall);
+            const accuracy = (currentTP + currentTN) / dataset.length;
+
+            document.getElementById('val-prec').innerText = precision.toFixed(2);
+            document.getElementById('val-rec').innerText = recall.toFixed(2);
+            document.getElementById('val-f1').innerText = f1.toFixed(2);
+            document.getElementById('val-acc').innerText = accuracy.toFixed(2);
+
+            // Update Global ROC State for Tooltip
+            currentTPR = recall;
+            currentFPR = (currentFP + currentTN) === 0 ? 0 : currentFP / (currentFP + currentTN);
+
+            // Update ROC Dot Position
+            rocDot.transition().duration(100)
+                .attr("cx", xRoc(currentFPR))
+                .attr("cy", yRoc(currentTPR));
+        }
+
+        window.onload = init;
+    </script>
+</body>
+</html>
